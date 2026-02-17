@@ -2,11 +2,12 @@ const express = require('express');
 const bodyParser = require('body-parser');
 const cors = require('cors');
 const fs = require('fs');
+const https = require('https'); // Встроенный модуль, работает безотказно
 
 const app = express();
-const PORT = process.env.PORT || 10000; // Render использует этот порт
+const PORT = process.env.PORT || 10000;
 
-// --- НАСТРОЙКИ ТЕЛЕГРАМ (ВСТАВЬ СВОИ ДАННЫЕ ТУТ) ---
+// --- НАСТРОЙКИ ТЕЛЕГРАМ ---
 const TG_TOKEN = "8547079220:AAEfwHPs8V7hIEOll2ET0MJEnU1z_Wp_t1A";
 const TG_CHAT_ID = "911686484";
 
@@ -15,32 +16,40 @@ app.use(bodyParser.json());
 
 const LOG_FILE = './logs.json';
 
-// Функция отправки в Telegram
-async function sendToTelegram(message) {
-    try {
-        // Динамический импорт fetch (так как Render использует новую версию Node)
-        const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args));
-        
-        await fetch(`https://api.telegram.org/bot${TG_TOKEN}/sendMessage`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                chat_id: TG_CHAT_ID,
-                text: message,
-                parse_mode: 'Markdown'
-            })
-        });
-    } catch (e) {
-        console.error('Ошибка отправки в Telegram:', e);
-    }
+// Функция отправки в Telegram через стандартный HTTPS
+function sendToTelegram(message) {
+    const data = JSON.stringify({
+        chat_id: TG_CHAT_ID,
+        text: message,
+        parse_mode: 'Markdown'
+    });
+
+    const options = {
+        hostname: 'api.telegram.org',
+        port: 443,
+        path: `/bot${TG_TOKEN}/sendMessage`,
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'Content-Length': data.length
+        }
+    };
+
+    const req = https.request(options, (res) => {
+        res.on('data', (d) => { process.stdout.write(d); });
+    });
+
+    req.on('error', (error) => { console.error('TG Error:', error); });
+    req.write(data);
+    req.end();
 }
 
 // Эндпоинт для логов
-app.post('/api/log', async (req, res) => {
+app.post('/api/log', (req, res) => {
     const { email, status, ip, device } = req.body;
-    const time = new Date().toLocaleString();
+    const time = new Date().toLocaleString('ru-RU', { timeZone: 'Europe/Kiev' }); // Указал часовой пояс
 
-    // 1. Сохраняем локально (на сервере)
+    // 1. Сохраняем локально
     let logs = [];
     if (fs.existsSync(LOG_FILE)) {
         try {
@@ -52,9 +61,14 @@ app.post('/api/log', async (req, res) => {
 
     // 2. Отправляем уведомление
     const emoji = status === 'success' ? '✅' : '🚫';
-    const msg = `${emoji} *ACCESS LOG*\n\n*Email:* ${email}\n*Status:* ${status.toUpperCase()}\n*IP:* ${ip}\n*Device:* ${device}\n*Time:* ${time}`;
+    const msg = `${emoji} *ACCESS LOG*\n\n` +
+                `*Email:* ${email}\n` +
+                `*Status:* ${status.toUpperCase()}\n` +
+                `*IP:* ${ip}\n` +
+                `*Device:* ${device}\n` +
+                `*Time:* ${time}`;
     
-    await sendToTelegram(msg);
+    sendToTelegram(msg);
 
     res.status(200).json({ message: 'Log saved and sent' });
 });
@@ -69,7 +83,6 @@ app.get('/api/logs', (req, res) => {
     }
 });
 
-// Проверка работоспособности (для пробуждения)
 app.get('/ping', (req, res) => res.send('pong'));
 
 app.listen(PORT, '0.0.0.0', () => {
