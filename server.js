@@ -7,8 +7,8 @@ const app = express();
 const PORT = process.env.PORT || 10000; // Render использует этот порт
 
 // --- НАСТРОЙКИ ТЕЛЕГРАМ (ВСТАВЬ СВОИ ДАННЫЕ ТУТ) ---
-const TG_TOKEN = "ВСТАВЬ_СЮДА_ТОКЕН_ОТ_BOTFATHER";
-const TG_CHAT_ID = "ВСТАВЬ_СЮДА_СВОЙ_ID";
+const TG_TOKEN = "8547079220:AAEfwHPs8V7hIEOll2ET0MJEnU1z_Wp_t1A";
+const TG_CHAT_ID = "911686484";
 
 app.use(cors());
 app.use(bodyParser.json());
