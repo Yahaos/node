@@ -8,8 +8,8 @@ const app = express();
 const PORT = process.env.PORT || 10000;
 
 // --- НАСТРОЙКИ ТЕЛЕГРАМ ---
-const TG_TOKEN = "8547079220:AAEfwHPs8V7hIEOll2ET0MJEnU1z_Wp_t1A";
-const TG_CHAT_ID = "911686484";
+const TG_TOKEN = process.env.TG_TOKEN;
+const TG_CHAT_ID = process.env.TG_CHAT_ID;
 
 app.use(cors());
 app.use(bodyParser.json());
