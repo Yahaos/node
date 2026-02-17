@@ -2,17 +2,10 @@ const express = require('express');
 const bodyParser = require('body-parser');
 const cors = require('cors');
 const fs = require('fs');
-const https = require('https');
+const https = require('https'); // Встроенный модуль, работает безотказно
 
 const app = express();
 const PORT = process.env.PORT || 10000;
-
-// --- НАСТРОЙКИ РОЛЕЙ ---
-// Ты можешь добавлять сюда новых пользователей вручную
-const USER_ROLES = {
-    "krekw@mail.ua": "admin",
-    "vladvoloshin2009@gmail.com": "premium"
-};
 
 // --- НАСТРОЙКИ ТЕЛЕГРАМ ---
 const TG_TOKEN = process.env.TG_TOKEN;
@@ -23,6 +16,7 @@ app.use(bodyParser.json());
 
 const LOG_FILE = './logs.json';
 
+// Функция отправки в Telegram через стандартный HTTPS
 function sendToTelegram(message) {
     const data = JSON.stringify({
         chat_id: TG_CHAT_ID,
@@ -50,47 +44,36 @@ function sendToTelegram(message) {
     req.end();
 }
 
-// НОВЫЙ ЭНДПОИНТ: Получение роли пользователя
-app.post('/api/get-role', (req, res) => {
-    const { email } = req.body;
-    if (!email) return res.status(400).json({ error: "Email required" });
-
-    const role = USER_ROLES[email] || "user";
-    res.json({ email, role });
-});
-
-// Эндпоинт для логов (обновлен: теперь пишет роль в телеграм)
+// Эндпоинт для логов
 app.post('/api/log', (req, res) => {
     const { email, status, ip, device } = req.body;
-    const time = new Date().toLocaleString('ru-RU', { timeZone: 'Europe/Kiev' });
-    
-    // Определяем роль для лога
-    const role = USER_ROLES[email] || "user";
+    const time = new Date().toLocaleString('ru-RU', { timeZone: 'Europe/Kiev' }); // Указал часовой пояс
 
+    // 1. Сохраняем локально
     let logs = [];
     if (fs.existsSync(LOG_FILE)) {
         try {
             logs = JSON.parse(fs.readFileSync(LOG_FILE));
         } catch(e) { logs = []; }
     }
-    logs.push({ email, status, role, ip, device, time });
+    logs.push({ email, status, ip, device, time });
     fs.writeFileSync(LOG_FILE, JSON.stringify(logs, null, 2));
 
+    // 2. Отправляем уведомление
     const emoji = status === 'success' ? '✅' : '🚫';
-    const roleEmoji = role === 'admin' ? '👑' : (role === 'premium' ? '💎' : '👤');
-    
     const msg = `${emoji} *ACCESS LOG*\n\n` +
                 `*Email:* ${email}\n` +
                 `*Status:* ${status.toUpperCase()}\n` +
-                `*Role:* ${role.toUpperCase()} ${roleEmoji}\n` +
                 `*IP:* ${ip}\n` +
                 `*Device:* ${device}\n` +
                 `*Time:* ${time}`;
     
     sendToTelegram(msg);
-    res.status(200).json({ message: 'Log saved' });
+
+    res.status(200).json({ message: 'Log saved and sent' });
 });
 
+// Эндпоинт для админки
 app.get('/api/logs', (req, res) => {
     if (fs.existsSync(LOG_FILE)) {
         const data = fs.readFileSync(LOG_FILE);
