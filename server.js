@@ -1,90 +1,105 @@
 const express = require('express');
 const bodyParser = require('body-parser');
 const cors = require('cors');
-const fs = require('fs');
-const https = require('https'); // Встроенный модуль, работает безотказно
+const mongoose = require('mongoose');
+const cloudinary = require('cloudinary').v2;
+const { CloudinaryStorage } = require('multer-storage-cloudinary');
+const multer = require('multer');
+const https = require('https');
 
 const app = express();
 const PORT = process.env.PORT || 10000;
 
-// --- НАСТРОЙКИ ТЕЛЕГРАМ ---
-const TG_TOKEN = process.env.TG_TOKEN;
-const TG_CHAT_ID = process.env.TG_CHAT_ID;
-
+// --- НАСТРОЙКИ ---
 app.use(cors());
 app.use(bodyParser.json());
 
-const LOG_FILE = './logs.json';
+// Подключение к MongoDB (Возьми строку в MongoDB Atlas)
+mongoose.connect(process.env.MONGO_URI);
 
-// Функция отправки в Telegram через стандартный HTTPS
+// Настройка Cloudinary
+cloudinary.config({
+    cloud_name: process.env.CLOUD_NAME,
+    api_key: process.env.CLOUD_KEY,
+    api_secret: process.env.CLOUD_SECRET
+});
+
+// --- МОДЕЛИ ДАННЫХ ---
+const Photo = mongoose.model('Photo', new mongoose.Schema({
+    title: String,
+    url: String,
+    public_id: String,
+    createdAt: { type: Date, default: Date.now }
+}));
+
+const Log = mongoose.model('Log', new mongoose.Schema({
+    email: String,
+    status: String,
+    ip: String,
+    device: String,
+    time: String
+}));
+
+// Настройка хранилища фото
+const storage = new CloudinaryStorage({
+    cloudinary: cloudinary,
+    params: { folder: 'visual_archive' }
+});
+const upload = multer({ storage: storage });
+
+// --- ТЕЛЕГРАМ ---
 function sendToTelegram(message) {
-    const data = JSON.stringify({
-        chat_id: TG_CHAT_ID,
-        text: message,
-        parse_mode: 'Markdown'
-    });
-
+    const data = JSON.stringify({ chat_id: process.env.TG_CHAT_ID, text: message, parse_mode: 'Markdown' });
     const options = {
-        hostname: 'api.telegram.org',
-        port: 443,
-        path: `/bot${TG_TOKEN}/sendMessage`,
+        hostname: 'api.telegram.org', port: 443,
+        path: `/bot${process.env.TG_TOKEN}/sendMessage`,
         method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'Content-Length': data.length
-        }
+        headers: { 'Content-Type': 'application/json', 'Content-Length': data.length }
     };
-
-    const req = https.request(options, (res) => {
-        res.on('data', (d) => { process.stdout.write(d); });
-    });
-
-    req.on('error', (error) => { console.error('TG Error:', error); });
+    const req = https.request(options);
     req.write(data);
     req.end();
 }
 
-// Эндпоинт для логов
-app.post('/api/log', (req, res) => {
-    const { email, status, ip, device } = req.body;
-    const time = new Date().toLocaleString('ru-RU', { timeZone: 'Europe/Kiev' }); // Указал часовой пояс
+// --- ЭНДПОИНТЫ ---
 
-    // 1. Сохраняем локально
-    let logs = [];
-    if (fs.existsSync(LOG_FILE)) {
-        try {
-            logs = JSON.parse(fs.readFileSync(LOG_FILE));
-        } catch(e) { logs = []; }
-    }
-    logs.push({ email, status, ip, device, time });
-    fs.writeFileSync(LOG_FILE, JSON.stringify(logs, null, 2));
-
-    // 2. Отправляем уведомление
-    const emoji = status === 'success' ? '✅' : '🚫';
-    const msg = `${emoji} *ACCESS LOG*\n\n` +
-                `*Email:* ${email}\n` +
-                `*Status:* ${status.toUpperCase()}\n` +
-                `*IP:* ${ip}\n` +
-                `*Device:* ${device}\n` +
-                `*Time:* ${time}`;
-    
-    sendToTelegram(msg);
-
-    res.status(200).json({ message: 'Log saved and sent' });
+// Загрузка фото
+app.post('/api/upload', upload.single('image'), async (req, res) => {
+    try {
+        const newPhoto = new Photo({
+            title: req.body.title || 'Untitled',
+            url: req.file.path,
+            public_id: req.file.filename
+        });
+        await newPhoto.save();
+        res.json(newPhoto);
+    } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// Эндпоинт для админки
-app.get('/api/logs', (req, res) => {
-    if (fs.existsSync(LOG_FILE)) {
-        const data = fs.readFileSync(LOG_FILE);
-        res.json(JSON.parse(data));
-    } else {
-        res.json([]);
-    }
+// Получение фото
+app.get('/api/photos', async (req, res) => {
+    const photos = await Photo.find().sort({ createdAt: -1 });
+    res.json(photos);
+});
+
+// Логи
+app.post('/api/log', async (req, res) => {
+    const { email, status, ip, device } = req.body;
+    const time = new Date().toLocaleString('ru-RU', { timeZone: 'Europe/Kiev' });
+    
+    const newLog = new Log({ email, status, ip, device, time });
+    await newLog.save();
+
+    const emoji = status === 'success' ? '✅' : '🚫';
+    sendToTelegram(`${emoji} *ACCESS*\n*Email:* ${email}\n*IP:* ${ip}`);
+    res.status(200).json({ message: 'Saved' });
+});
+
+app.get('/api/logs', async (req, res) => {
+    const logs = await Log.find().sort({ _id: -1 }).limit(100);
+    res.json(logs);
 });
 
 app.get('/ping', (req, res) => res.send('pong'));
 
-app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Server is running on port ${PORT}`);
-});
+app.listen(PORT, '0.0.0.0', () => console.log(`Server running on ${PORT}`));
