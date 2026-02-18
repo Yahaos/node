@@ -7,6 +7,12 @@ const { CloudinaryStorage } = require('multer-storage-cloudinary');
 const multer = require('multer');
 const https = require('https');
 
+// Пакеты для авторизации
+const session = require('express-session');
+const MongoStore = require('connect-mongo');
+const passport = require('passport');
+const GoogleStrategy = require('passport-google-oauth20').Strategy;
+
 const app = express();
 const PORT = process.env.PORT || 10000;
 
@@ -14,17 +20,34 @@ const PORT = process.env.PORT || 10000;
 app.use(cors());
 app.use(bodyParser.json());
 
-// Подключение к MongoDB (Возьми строку в MongoDB Atlas)
+// 1. ПОДКЛЮЧЕНИЕ К MONGODB
 mongoose.connect(process.env.MONGODB_URI);
 
-// Настройка Cloudinary
-cloudinary.config({
-    cloud_name: process.env.CLOUD_NAME,
-    api_key: process.env.CLOUD_KEY,
-    api_secret: process.env.CLOUD_SECRET
-});
+// 2. НАСТРОЙКА СЕССИЙ (Сохраняются в базу данных)
+app.use(session({
+    secret: process.env.SESSION_SECRET || 'main-secret-key',
+    resave: false,
+    saveUninitialized: false,
+    store: MongoStore.create({ 
+        mongoUrl: process.env.MONGODB_URI 
+    }),
+    cookie: { maxAge: 24 * 60 * 60 * 1000 } // 24 часа
+}));
+
+app.use(passport.initialize());
+app.use(passport.session());
 
 // --- МОДЕЛИ ДАННЫХ ---
+
+// Новая модель пользователя
+const User = mongoose.model('User', new mongoose.Schema({
+    googleId: String,
+    displayName: String,
+    email: String,
+    avatar: String,
+    createdAt: { type: Date, default: Date.now }
+}));
+
 const Photo = mongoose.model('Photo', new mongoose.Schema({
     title: String,
     url: String,
@@ -40,7 +63,45 @@ const Log = mongoose.model('Log', new mongoose.Schema({
     time: String
 }));
 
-// Настройка хранилища фото
+// --- НАСТРОЙКА PASSPORT (GOOGLE) ---
+
+passport.use(new GoogleStrategy({
+    clientID: process.env.GOOGLE_CLIENT_ID,
+    clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+    callbackURL: "/auth/google/callback"
+  },
+  async (accessToken, refreshToken, profile, done) => {
+    try {
+        // Ищем пользователя в базе или создаем, если его нет
+        let user = await User.findOne({ googleId: profile.id });
+        if (!user) {
+            user = await User.create({
+                googleId: profile.id,
+                displayName: profile.displayName,
+                email: profile.emails[0].value,
+                avatar: profile.photos[0].value
+            });
+        }
+        return done(null, user);
+    } catch (err) {
+        return done(err, null);
+    }
+  }
+));
+
+passport.serializeUser((user, done) => done(null, user.id));
+passport.deserializeUser(async (id, done) => {
+    const user = await User.findById(id);
+    done(null, user);
+});
+
+// --- CLOUDINARY ---
+cloudinary.config({
+    cloud_name: process.env.CLOUD_NAME,
+    api_key: process.env.CLOUD_KEY,
+    api_secret: process.env.CLOUD_SECRET
+});
+
 const storage = new CloudinaryStorage({
     cloudinary: cloudinary,
     params: { folder: 'visual_archive' }
@@ -61,9 +122,30 @@ function sendToTelegram(message) {
     req.end();
 }
 
-// --- ЭНДПОИНТЫ ---
+// --- ЭНДПОИНТЫ АВТОРИЗАЦИИ ---
 
-// Загрузка фото
+app.get('/auth/google',
+  passport.authenticate('google', { scope: ['profile', 'email'] }));
+
+app.get('/auth/google/callback', 
+  passport.authenticate('google', { failureRedirect: '/' }),
+  (req, res) => {
+    // После успешного входа отправляем на главную страницу (или в личный кабинет)
+    res.redirect('/'); 
+  });
+
+app.get('/api/current_user', (req, res) => {
+    res.send(req.user);
+});
+
+app.get('/auth/logout', (req, res) => {
+    req.logout(() => {
+        res.redirect('/');
+    });
+});
+
+// --- ОСТАЛЬНЫЕ ЭНДПОИНТЫ ---
+
 app.post('/api/upload', upload.single('image'), async (req, res) => {
     try {
         const newPhoto = new Photo({
@@ -76,13 +158,11 @@ app.post('/api/upload', upload.single('image'), async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// Получение фото
 app.get('/api/photos', async (req, res) => {
     const photos = await Photo.find().sort({ createdAt: -1 });
     res.json(photos);
 });
 
-// Логи
 app.post('/api/log', async (req, res) => {
     const { email, status, ip, device } = req.body;
     const time = new Date().toLocaleString('ru-RU', { timeZone: 'Europe/Kiev' });
