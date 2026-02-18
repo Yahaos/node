@@ -15,7 +15,7 @@ app.use(cors());
 app.use(bodyParser.json());
 
 // Подключение к MongoDB (Возьми строку в MongoDB Atlas)
-mongoose.connect(process.env.MONGODB_URI);
+mongoose.connect(`mongodb+srv://renderuser:password22031975@cluster0.w8lqag2.mongodb.net/test?retryWrites=true&w=majority`);
 
 // Настройка Cloudinary
 cloudinary.config({
