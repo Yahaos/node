@@ -16,30 +16,37 @@ const GoogleStrategy = require('passport-google-oauth20').Strategy;
 const app = express();
 const PORT = process.env.PORT || 10000;
 
+// !!! ВАЖНО ДЛЯ RENDER: Доверяем прокси, чтобы куки не слетали
+app.set('trust proxy', 1); 
+
 // --- НАСТРОЙКИ ---
-app.use(cors());
+// Если фронтенд и бэкенд на разных доменах, добавьте в cors: { origin: 'твой_урл', credentials: true }
+app.use(cors()); 
 app.use(bodyParser.json());
 
 // 1. ПОДКЛЮЧЕНИЕ К MONGODB
 mongoose.connect(process.env.MONGODB_URI);
 
-// 2. НАСТРОЙКА СЕССИЙ (Сохраняются в базу данных)
+// 2. НАСТРОЙКА СЕССИЙ
 app.use(session({
     secret: process.env.SESSION_SECRET || 'main-secret-key',
     resave: false,
-    saveUninitialized: false,
+    saveUninitialized: false, 
     store: MongoStore.create({ 
-        mongoUrl: process.env.MONGODB_URI 
+        mongoUrl: process.env.MONGODB_URI,
+        collectionName: 'sessions' // Сессии будут лежать здесь
     }),
-    cookie: { maxAge: 24 * 60 * 60 * 1000 } // 24 часа
+    cookie: { 
+        maxAge: 24 * 60 * 60 * 1000, // 24 часа
+        secure: true, // Обязательно true для HTTPS на Render
+        sameSite: 'none' // Позволяет работать куки между разными доменами
+    }
 }));
 
 app.use(passport.initialize());
 app.use(passport.session());
 
 // --- МОДЕЛИ ДАННЫХ ---
-
-// Новая модель пользователя
 const User = mongoose.model('User', new mongoose.Schema({
     googleId: String,
     displayName: String,
@@ -63,16 +70,15 @@ const Log = mongoose.model('Log', new mongoose.Schema({
     time: String
 }));
 
-// --- НАСТРОЙКА PASSPORT (GOOGLE) ---
-
+// --- НАСТРОЙКА PASSPORT ---
 passport.use(new GoogleStrategy({
     clientID: process.env.GOOGLE_CLIENT_ID,
     clientSecret: process.env.GOOGLE_CLIENT_SECRET,
-    callbackURL: "/auth/google/callback"
+    callbackURL: "/auth/google/callback",
+    proxy: true // Обязательно true для работы через прокси Render
   },
   async (accessToken, refreshToken, profile, done) => {
     try {
-        // Ищем пользователя в базе или создаем, если его нет
         let user = await User.findOne({ googleId: profile.id });
         if (!user) {
             user = await User.create({
@@ -89,10 +95,17 @@ passport.use(new GoogleStrategy({
   }
 ));
 
-passport.serializeUser((user, done) => done(null, user.id));
+passport.serializeUser((user, done) => {
+    done(null, user.id);
+});
+
 passport.deserializeUser(async (id, done) => {
-    const user = await User.findById(id);
-    done(null, user);
+    try {
+        const user = await User.findById(id);
+        done(null, user);
+    } catch (err) {
+        done(err, null);
+    }
 });
 
 // --- CLOUDINARY ---
@@ -122,7 +135,7 @@ function sendToTelegram(message) {
     req.end();
 }
 
-// --- ЭНДПОИНТЫ АВТОРИЗАЦИИ ---
+// --- ЭНДПОИНТЫ ---
 
 app.get('/auth/google',
   passport.authenticate('google', { scope: ['profile', 'email'] }));
@@ -130,21 +143,18 @@ app.get('/auth/google',
 app.get('/auth/google/callback', 
   passport.authenticate('google', { failureRedirect: '/' }),
   (req, res) => {
-    // После успешного входа отправляем на главную страницу (или в личный кабинет)
     res.redirect('/'); 
   });
 
 app.get('/api/current_user', (req, res) => {
-    res.send(req.user);
+    res.json(req.user || null);
 });
 
 app.get('/auth/logout', (req, res) => {
-    req.logout(() => {
+    req.logout((err) => {
         res.redirect('/');
     });
 });
-
-// --- ОСТАЛЬНЫЕ ЭНДПОИНТЫ ---
 
 app.post('/api/upload', upload.single('image'), async (req, res) => {
     try {
