@@ -124,17 +124,26 @@ const upload = multer({ storage: storage });
 function sendToTelegram(message) {
     const data = JSON.stringify({ chat_id: process.env.TG_CHAT_ID, text: message, parse_mode: 'Markdown' });
     const options = {
-        hostname: 'api.telegram.org', port: 443,
+        hostname: 'api.telegram.org',
+        port: 443,
         path: `/bot${process.env.TG_TOKEN}/sendMessage`,
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Content-Length': data.length }
+        headers: { 
+            'Content-Type': 'application/json', 
+            'Content-Length': Buffer.byteLength(data) 
+        }
     };
-    const req = https.request(options);
+    const req = https.request(options, (res) => {
+        console.log(`Telegram status: ${res.statusCode}`);
+    });
+    req.on('error', (e) => console.error('Telegram Error:', e));
     req.write(data);
     req.end();
 }
 
 // --- ЭНДПОИНТЫ ---
+app.use(express.json()); // Обязательно для обработки JSON в req.body
+app.use(express.urlencoded({ extended: true }));
 
 app.get('/auth/google',
   passport.authenticate('google', { scope: ['profile', 'email'] }));
