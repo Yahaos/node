@@ -21,9 +21,10 @@ app.set('trust proxy', 1);
 
 // --- НАСТРОЙКИ ---
 // Если фронтенд и бэкенд на разных доменах, добавьте в cors: { origin: 'твой_урл', credentials: true }
-app.use(cors()); 
-app.use(bodyParser.json());
-
+app.use(cors({
+    origin: 'https://yahaos.github.io', // Ваш фронтенд (БЕЗ index.html в конце!)
+    credentials: true // РАЗРЕШАЕТ ПЕРЕДАЧУ КУК
+}));
 // 1. ПОДКЛЮЧЕНИЕ К MONGODB
 mongoose.connect(process.env.MONGODB_URI);
 
@@ -31,15 +32,13 @@ mongoose.connect(process.env.MONGODB_URI);
 app.use(session({
     secret: process.env.SESSION_SECRET || 'main-secret-key',
     resave: false,
-    saveUninitialized: false, 
-    store: MongoStore.create({ 
-        mongoUrl: process.env.MONGODB_URI,
-        collectionName: 'sessions' // Сессии будут лежать здесь
-    }),
+    saveUninitialized: false,
+    store: MongoStore.create({ mongoUrl: process.env.MONGODB_URI }),
     cookie: { 
-        maxAge: 24 * 60 * 60 * 1000, // 24 часа
-        secure: true, // Обязательно true для HTTPS на Render
-        sameSite: 'none' // Позволяет работать куки между разными доменами
+        maxAge: 24 * 60 * 60 * 1000,
+        secure: true,      // Обязательно для HTTPS
+        sameSite: 'none',  // Обязательно для разных доменов (GitHub -> Render)
+        httpOnly: true
     }
 }));
 
